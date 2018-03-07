@@ -11,10 +11,14 @@ conv_kernel_window = 3
 conv_kernel_nums = 150
 learning_rate = 0.001
 
-pos_feature = False
+pos_feature = True
 pos_num = 123
 pos_dim = 5
 lexical_feature = True
+
+attention_1 = False
+attention_2 = True
+attention_self = False
 
 
 class Batch:
@@ -61,16 +65,67 @@ class Cnn:
         pos1_lookup_table = tf.get_variable('pos1_embeddings', [pos_num, pos_dim])
         pos2_lookup_table = tf.get_variable('pos2_embeddings', [pos_num, pos_dim])
 
+        word_embeddings = tf.nn.embedding_lookup(lookup_table, self.samples)
+
+        # if lexical_feature:
+        nearby_word1_emb = tf.nn.embedding_lookup(lookup_table, self.nearby_words1)
+        nearby_word2_emb = tf.nn.embedding_lookup(lookup_table, self.nearby_words2)
+
+        if attention_1:
+            # score function is matrix matmul: w M q
+            self.att_relation1 = tf.get_variable('att_rel1', shape=[word_dim, word_dim], dtype=tf.float32,
+                                                 initializer=tf.truncated_normal_initializer(0.0, 0.1))
+            self.att_relation2 = tf.get_variable('att_rel2', shape=[word_dim, word_dim], dtype=tf.float32,
+                                                 initializer=tf.truncated_normal_initializer(0.0, 0.1))
+            att_word = tf.reshape(word_embeddings, [-1, word_dim])
+            att_entity1 = tf.slice(nearby_word1_emb, [0, 0, 0], [-1, 1, -1])
+            att_entity2 = tf.slice(nearby_word1_emb, [0, 0, 0], [-1, 1, -1])
+            att_score1 = tf.matmul(tf.reshape(tf.matmul(att_word, self.att_relation1, transpose_b=True),
+                                              [-1, sentence_len, word_dim]), att_entity1, transpose_b=True)
+            att_score2 = tf.matmul(tf.reshape(tf.matmul(att_word, self.att_relation2, transpose_b=True),
+                                              [-1, sentence_len, word_dim]), att_entity2, transpose_b=True)
+            att_weight = tf.nn.softmax(tf.div(att_score1 + att_score2, 2), axis=1)
+
+            word_embeddings = tf.multiply(word_embeddings, att_weight)
+        elif attention_2:
+            att_v = tf.get_variable('att_V', shape=[1, 100], dtype=tf.float32,
+                                    initializer=tf.truncated_normal_initializer(0.0, 0.1))
+            att_w = tf.get_variable('att_W', shape=[100, word_dim], dtype=tf.float32,
+                                    initializer=tf.truncated_normal_initializer(0.0, 0.1))
+            att_u = tf.get_variable('att_U', shape=[100, word_dim], dtype=tf.float32,
+                                    initializer=tf.truncated_normal_initializer(0.0, 0.1))
+
+            att_entity1 = tf.slice(nearby_word1_emb, [0, 0, 0], [-1, 1, -1])
+            att_entity2 = tf.slice(nearby_word2_emb, [0, 0, 0], [-1, 1, -1])
+            att_score1 = tf.map_fn(lambda x: tf.matmul(att_v, x),
+                                   tf.tanh(tf.add(tf.map_fn(lambda x: tf.matmul(att_w, x, transpose_b=True),
+                                                            word_embeddings),
+                                                  tf.map_fn(lambda x: tf.matmul(att_u, x, transpose_b=True),
+                                                            att_entity1))))
+            att_score2 = tf.map_fn(lambda x: tf.matmul(att_v, x),
+                                   tf.tanh(tf.add(tf.map_fn(lambda x: tf.matmul(att_w, x, transpose_b=True),
+                                                            word_embeddings),
+                                                  tf.map_fn(lambda x: tf.matmul(att_u, x, transpose_b=True),
+                                                            att_entity2))))
+            att_weight = tf.reshape(tf.nn.softmax(tf.div(tf.add(att_score1, att_score2), 2)), [-1, sentence_len, 1])
+            word_embeddings = tf.multiply(word_embeddings, att_weight)
+        elif attention_self:
+
+            att_w2 = tf.get_variable('att_w2', shape=[100, word_dim], dtype=tf.float32,
+                                     initializer=tf.truncated_normal_initializer(0.0, 0.1))
+            att_w1 = tf.get_variable('att_w1', shape=[1, 100], dtype=tf.float32,
+                                     initializer=tf.truncated_normal_initializer(0.0, 0.1))
+            att_score = tf.map_fn(lambda x: tf.matmul(att_w1, x),
+                                  tf.tanh(tf.map_fn(lambda y: tf.matmul(att_w2, y, transpose_b=True), word_embeddings)))
+            att_weight = tf.reshape(tf.nn.softmax(att_score), [-1, sentence_len, 1])
+            word_embeddings = tf.multiply(word_embeddings, att_weight)
+
         if pos_feature:
-            samples_embeddings = tf.concat([tf.nn.embedding_lookup(lookup_table, self.samples),
+            samples_embeddings = tf.concat([word_embeddings,
                                             tf.nn.embedding_lookup(pos1_lookup_table, self.rel_pos1),
                                             tf.nn.embedding_lookup(pos2_lookup_table, self.rel_pos2)], axis=2)
         else:
-            samples_embeddings = tf.nn.embedding_lookup(lookup_table, self.samples)
-
-        if lexical_feature:
-            nearby_word1_emb = tf.nn.embedding_lookup(lookup_table, self.nearby_words1)
-            nearby_word2_emb = tf.nn.embedding_lookup(lookup_table, self.nearby_words2)
+            samples_embeddings = word_embeddings
 
         samples_embeddings = tf.nn.dropout(samples_embeddings, self.dropout)
 

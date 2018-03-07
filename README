@@ -1,9 +1,0 @@
-#cnn model
-ref: Relation Classification via Convolutional Deep Neural Network
-http://www.aclweb.org/anthology/C14-1220
-
-cnn acc:60.8%  f1:59.68
-cnn + dropout acc:65.14%  f1:64.05
-cnn + dropout + lexical acc:75.1%  f1:75.77
-cnn + dropout + pos acc:77.2%  f1:78.29
-cnn + dropout + po + lexical acc:77.8%  f1:78.63
