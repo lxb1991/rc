@@ -9,19 +9,24 @@ word_dim = 50
 epochs = 1000
 learning_rate = 0.001
 
-use_lstm = False
+use_lstm = True
 lstm_hidden = 300
+
+attention = False
 
 
 class Batch:
 
-    batch_size = 100
     shuffle = True
 
     def __init__(self, samples):
 
         self.samples = samples
         self.labels = []
+        if attention:
+            self.batch_size = 10
+        else:
+            self.batch_size = 100
 
     def generate(self):
 
@@ -46,7 +51,6 @@ class Rnn:
                                        initializer=tf.convert_to_tensor(embeddings, tf.float32))
 
         samples_embeddings = tf.nn.embedding_lookup(lookup_table, self.samples)
-
         with tf.name_scope('recurrent'):
 
             with tf.variable_scope('recurrent', reuse=tf.AUTO_REUSE):
@@ -75,18 +79,24 @@ class Rnn:
                     rnn_out, rnn_state = tf.nn.bidirectional_dynamic_rnn(fw_rnn_cell, bw_rnn_cell, samples_embeddings,
                                                                          initial_state_fw=fw_init_state,
                                                                          initial_state_bw=bw_init_state)
+                bilstm_out = tf.concat(rnn_out, 2)
 
-                rnn_out = tf.expand_dims(tf.concat(rnn_out, 2), axis=-1)
-                pooled = tf.nn.max_pool(rnn_out, ksize=[1, sentence_len, 1, 1], strides=[1, sentence_len, 1, 1],
-                                        padding="SAME", name='max_pooling')
-                pooled_flat = tf.reshape(pooled, [-1, rnn_sample_dim * 2])
+                if attention:
+                    weight = tf.get_variable('att_weight', shape=[lstm_hidden * 2, 1],
+                                             initializer=tf.truncated_normal_initializer(0.0, 0.1))
+                    alpha = tf.nn.softmax(tf.map_fn(lambda x: tf.matmul(x, weight), tf.tanh(bilstm_out)), axis=1)
+                    att_out = tf.tanh(tf.matmul(alpha, bilstm_out, transpose_a=True))
+                else:
+                    rnn_out = tf.expand_dims(bilstm_out, axis=-1)
+                    pooled = tf.nn.max_pool(rnn_out, ksize=[1, sentence_len, 1, 1], strides=[1, sentence_len, 1, 1],
+                                            padding="SAME", name='max_pooling')
+                    att_out = tf.reshape(pooled, [-1, rnn_sample_dim * 2])
 
         with tf.name_scope('fully_conn'):
-
             with tf.variable_scope('fully_conn', reuse=tf.AUTO_REUSE):
 
                 fully_dim = rnn_sample_dim * 2
-                fully_input = tf.nn.dropout(pooled_flat, self.dropout)
+                fully_input = tf.nn.dropout(tf.squeeze(att_out), self.dropout)
 
                 weight = tf.get_variable(name="weight", shape=[fully_dim, label_nums],
                                          initializer=tf.truncated_normal_initializer(0.0, 0.1))
@@ -99,8 +109,8 @@ class Rnn:
         with tf.name_scope('accuracy'):
 
             self.predict_labels = tf.argmax(scores, axis=1, name='predict')
-            correct = tf.equal(self.predict_labels, tf.argmax(self.labels, axis=1))
-            self.accuracy = tf.reduce_mean(tf.cast(correct, tf.float32), name='calculate_accuracy')
+            self.correct = tf.equal(self.predict_labels, tf.argmax(self.labels, axis=1))
+            self.accuracy = tf.reduce_mean(tf.cast(self.correct, tf.float32), name='calculate_accuracy')
 
         with tf.name_scope('loss'):
 

@@ -24,6 +24,22 @@ def load_data(file_path, label_nums):
     return samples, labels, locations, max_len
 
 
+def load_sentence_len(file_path):
+
+    lines = list(open(file_path, "r").readlines())
+    sentences = [s.split(' ') for s in clean_sentences(lines)]
+    return [len(x) for x in sentences]
+
+
+def load_real_result(file_path):
+    lines = list(open(file_path, "r").readlines())
+    sentences = [s.split(' ') for s in clean_sentences(lines)]
+    real = []
+    for sentence in sentences:
+        real.append(sentence[0])
+    return real
+
+
 def load_data_raw(file_path, label_nums):
 
     lines = list(open(file_path, "r").readlines())
@@ -56,4 +72,3 @@ def load_relation_type(file_path):
 def clean_sentences(sentences):
 
     return [sentence.strip().lower() for sentence in sentences]
-

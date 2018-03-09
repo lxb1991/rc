@@ -3,7 +3,7 @@ from rnn import model
 import numpy as np
 import tensorflow as tf
 import subprocess
-
+from analyzer import statistic
 train_file = "../semeval08/raw/train.txt"
 test_file = "../semeval08/raw/test.txt"
 
@@ -58,8 +58,8 @@ def train_runner(train_batch, test_batch, embeddings, id2relations, max_len):
 
                 feed_dict = {test.samples: test_batch.samples, test.labels: test_batch.labels, test.dropout: 1.0}
 
-                losses, predict_labels, accuracy = sess.run([test.reg_losses, test.predict_labels, test.accuracy],
-                                                            feed_dict=feed_dict)
+                losses, predict_labels, accuracy, correct = sess.run([test.reg_losses, test.predict_labels,
+                                                                      test.accuracy, test.correct], feed_dict=feed_dict)
 
                 f1 = f1_score(predict_labels.tolist(), np.argmax(test_batch.labels, axis=1).tolist(), id2relations)
                 print("test=> loss: {0} accuracy: {1} f1_score: {2}".format(losses, accuracy, f1))
@@ -71,6 +71,7 @@ def train_runner(train_batch, test_batch, embeddings, id2relations, max_len):
                 print('max accuracy: {0} max f1: {1}'.format(max_accuracy, max_f1score))
 
                 if train_accuracy/batch_nums > 0.98:
+                    statistic.error_distribute(correct, 'rnn')
                     return
 
 
