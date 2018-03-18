@@ -3,11 +3,14 @@ import re
 raw_train = "../semeval08/raw/TRAIN_FILE.TXT"
 raw_test = "../semeval08/raw/TEST_FILE.TXT"
 raw_relations = "../semeval08/f1/relation_types.txt"
-train_file = "../semeval08/raw/train.txt"
-test_file = "../semeval08/raw/test.txt"
+train_file = "../semeval08/rnn/train.txt"
+test_file = "../semeval08/rnn/test.txt"
 
 
 def process_raw():
+    """
+        生成rnn下的文件
+    """
     relations = {}
     process_relation(relations)
 
@@ -67,4 +70,5 @@ def clean_str(string):
 
 
 if __name__ == '__main__':
-    process_raw()
+    # process_raw()
+    pass

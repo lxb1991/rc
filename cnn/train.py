@@ -1,205 +1,138 @@
 from loader import semeval, embeddings as emb
 from cnn import model
-import numpy as np
 import tensorflow as tf
-import subprocess
+from textutil import util
+from textutil import f1measure
 
 
-def train():
+def train(train_batch, test_batch, embeddings, max_len):
 
-    train_samples, train_labels, train_entities_locations, train_max_lens = \
-        semeval.load_data('../semeval08/train.txt', model.label_nums)
-
-    test_samples, test_labels, test_entities_locations, test_max_lens = \
-        semeval.load_data('../semeval08/test.txt', model.label_nums)
-
-    id2relations = semeval.load_relation_type('../semeval08/f1/relation_types.txt')
-
-    max_len = max(train_max_lens, test_max_lens)
-
-    print("load data complete, sentence max len: {0}".format(max_len))
-
-    train_batch, test_batch, embeddings = process_data(train_samples, train_labels, train_entities_locations,
-                                                       test_samples, test_labels, test_entities_locations, max_len)
-
-    train_runner(train_batch, test_batch, embeddings, id2relations, max_len)
-
-
-def train_runner(train_batch, test_batch, embeddings, id2relations, max_len):
+    measure = f1measure.F1Measure(test_batch.labels)
 
     with tf.Graph().as_default():
-        with tf.variable_scope('cnn', reuse=False):
-            cnn = model.Cnn(embeddings, max_len)
-        with tf.variable_scope('cnn', reuse=True):
-            test = model.Cnn(embeddings, max_len)
-        with tf.Session() as sess:
 
+        with tf.variable_scope(model.Cnn.MODEL_NAME, reuse=tf.AUTO_REUSE):
+            cnn = model.Cnn(FLAGS, embeddings, max_len)
+
+        with tf.Session() as sess:
             sess.run(tf.global_variables_initializer())
 
             max_accuracy = 0
             max_f1score = 0
 
-            for epoch in range(model.epochs):
+            for epoch in range(FLAGS.epoch_num):
 
-                train_loss = 0
-                train_accuracy = 0
+                train_accuracy = train_runner(epoch, sess, train_batch, cnn)
+                accuracy, labels = test_runner(sess, test_batch, cnn)
 
-                for batch in train_batch.generate():
-                    samples, labels, rel_pos1, rel_pos2, nearby_w1, nearby_w2 = zip(*batch)
-
-                    feed_dict = {cnn.samples: samples, cnn.labels: labels, cnn.rel_pos1: rel_pos1,
-                                 cnn.rel_pos2: rel_pos2, cnn.nearby_words1: nearby_w1, cnn.nearby_words2: nearby_w2,
-                                 cnn.dropout: 0.5}
-
-                    _, losses, accuracy = sess.run([cnn.opt, cnn.reg_losses, cnn.accuracy], feed_dict=feed_dict)
-
-                    train_loss += losses
-                    train_accuracy += accuracy
-                batch_nums = len(train_batch.samples)/train_batch.batch_size
-                print("train=> epoch: {0} loss: {1} accuracy: {2}".format(epoch, train_loss/batch_nums,
-                                                                          train_accuracy/batch_nums))
-
-                feed_dict = {test.samples: test_batch.samples, test.labels: test_batch.labels,
-                             test.rel_pos1: test_batch.rel_pos1, test.rel_pos2: test_batch.rel_pos2,
-                             test.nearby_words1: test_batch.nearby_words1, test.nearby_words2: test_batch.nearby_words2,
-                             test.dropout: 1.0}
-
-                losses, predict_labels, accuracy = sess.run([test.reg_losses, test.predict_labels, test.accuracy],
-                                                            feed_dict=feed_dict)
-                f1 = f1_score(predict_labels.tolist(), np.argmax(test_batch.labels, axis=1).tolist(), id2relations)
-                print("test=> loss: {0} accuracy: {1} f1_score: {2}".format(losses, accuracy, f1))
-
-                if max_accuracy < accuracy:
-                    max_accuracy = accuracy
-                if max_f1score < f1:
-                    max_f1score = f1
-                print('max accuracy: {0} max f1: {1}'.format(max_accuracy, max_f1score))
-
-                if train_accuracy/batch_nums > 0.98:
-                    return
+                if train_accuracy > 0.7:
+                    f1 = measure.f1_score(labels)
+                    print('epoch:{0} test f1 score: {1}'.format(epoch, f1))
+                    if max_accuracy < accuracy:
+                        max_accuracy = accuracy
+                    if max_f1score < f1:
+                        max_f1score = f1
+                    print('max accuracy: {0} max f1: {1}\n'.format(max_accuracy, max_f1score))
 
 
-def f1_score(predict_labels, test_labels, id2relations):
-    prediction_result_file = open('../semeval08/f1/prediction_result.txt', 'w')
-    real_result_file = open('../semeval08/f1/real_result.txt', 'w')
+def train_runner(epoch, sess, train_batch, cnn):
 
-    for index in range(len(predict_labels)):
-        real_result_file.write(str(index) + '\t' + id2relations[test_labels[index]])
-        prediction_result_file.write(str(index) + '\t' + id2relations[predict_labels[index]])
+    train_loss = 0
+    train_accuracy = 0
 
-    prediction_result_file.close()
-    real_result_file.close()
+    for batch in train_batch.generate(True):
+        samples, labels, rel_pos1, rel_pos2, e1, e2, nearby_w1, nearby_w2 = zip(*batch)
 
-    output = subprocess.getoutput('perl ../semeval08/f1/semeval2010_task8_scorer-v1.2.pl ../semeval08/f1/prediction_result.txt ../semeval08/f1/real_result.txt')
-    f1 = float(output[-10:-5])
-    return f1
+        feed_dict = {cnn.samples: samples, cnn.labels: labels, cnn.rel_pos1: rel_pos1,
+                     cnn.rel_pos2: rel_pos2, cnn.entity1: e1, cnn.entity2: e2, cnn.nearby_words1: nearby_w1,
+                     cnn.nearby_words2: nearby_w2, cnn.dropout: 0.5}
 
+        _, losses, accuracy = sess.run([cnn.opt, cnn.losses, cnn.accuracy], feed_dict=feed_dict)
 
-def process_data(train_samples, train_labels, train_entities_loc, test_samples, test_labels, test_entities_loc,
-                 max_len):
-
-    pad_sentence(train_samples, max_len)
-    pad_sentence(test_samples, max_len)
-
-    vocab, embeddings = emb.load_embedding(model.word_dim, emb.words_path, emb.em_path)
-    origin_vocab = len(vocab)
-    print("origin_vocab len : {0}".format(origin_vocab))
-
-    pad_id = len(vocab)
-    vocab[model.padding_word] = pad_id
-    embeddings = np.asarray(embeddings)
-    embeddings = np.vstack((embeddings, np.zeros([model.word_dim], dtype=float)))
-
-    train_batch = word2index(train_samples, vocab, train_entities_loc)
-    train_batch.labels = train_labels
-    test_batch = word2index(test_samples, vocab, test_entities_loc)
-    test_batch.labels = test_labels
-
-    oov_nums = len(vocab) - origin_vocab - 1
-    oov_embeddings = np.random.normal(0, 0.1, [oov_nums, model.word_dim])
-    embeddings = np.vstack((embeddings, oov_embeddings))
-    print("load complete vocab len : {0}, embeddings len: {1}".format(len(vocab), len(embeddings)))
-
-    return train_batch, test_batch, embeddings
+        train_loss += losses
+        train_accuracy += accuracy
+    batch_nums = len(train_batch.samples) / train_batch.batch_size
+    print("train=> epoch: {0} loss: {1} accuracy: {2}".format(epoch, train_loss / batch_nums,
+                                                              train_accuracy / batch_nums))
+    return train_accuracy / batch_nums
 
 
-def word2index(sentences, vocab, entities_locations):
-    oov_nums = 0
-    input_ids = []
-    entities_rel_pos1 = []
-    entities_rel_pos2 = []
-    nearby_words1 = []
-    nearby_words2 = []
+def test_runner(sess, test_batch, cnn):
+    test_loss = 0
+    test_accuracy = 0
+    p_labels = []
+    for batch in test_batch.generate(False):
+        samples, labels, rel_pos1, rel_pos2, e1, e2, nearby_w1, nearby_w2 = zip(*batch)
 
-    for i, sentence in enumerate(sentences):
-        vocab_wid = []
-        rel2en1_pos = []
-        rel2en2_pos = []
+        feed_dict = {cnn.samples: samples, cnn.labels: labels, cnn.rel_pos1: rel_pos1,
+                     cnn.rel_pos2: rel_pos2, cnn.entity1: e1, cnn.entity2: e2, cnn.nearby_words1: nearby_w1,
+                     cnn.nearby_words2: nearby_w2, cnn.dropout: 1.0}
 
-        en1_pos = int(entities_locations[i][0])
-        en2_pos = int(entities_locations[i][2])
-        for index, word in enumerate(sentence):
-            if word not in vocab:
-                oov_nums += 1
-                vocab[word] = len(vocab)
+        losses, p_label, accuracy, correct = sess.run([cnn.losses, cnn.predict, cnn.accuracy, cnn.correct],
+                                                      feed_dict=feed_dict)
 
-            vocab_wid.append(vocab[word])
-            rel2en1_pos.append(convert2positive(index - en1_pos))
-            rel2en2_pos.append(convert2positive(index - en2_pos))
+        test_loss += losses
+        test_accuracy += accuracy
+        p_labels.extend(p_label.tolist())
 
-        e1_temp = []
-        e2_temp = []
-        e1_temp.append(vocab[sentence[en1_pos]])
-        e2_temp.append(vocab[sentence[en2_pos]])
-
-        if en1_pos >= 1:
-            e1_temp.append(vocab[sentence[en1_pos-1]])
-        else:
-            e1_temp.append(vocab[sentence[0]])
-
-        if en1_pos < len(sentence)-1:
-            e1_temp.append(vocab[sentence[en1_pos+1]])
-        else:
-            e1_temp.append(vocab[sentence[en1_pos]])
-
-        if en2_pos >= 1:
-            e2_temp.append(vocab[sentence[en2_pos-1]])
-        else:
-            e2_temp.append(vocab[sentence[0]])
-
-        if en2_pos < len(sentence) - 1:
-            e2_temp.append(vocab[sentence[en2_pos+1]])
-        else:
-            e2_temp.append(vocab[sentence[en2_pos]])
-
-        input_ids.append(vocab_wid)
-        entities_rel_pos1.append(rel2en1_pos)
-        entities_rel_pos2.append(rel2en2_pos)
-        nearby_words1.append(e1_temp)
-        nearby_words2.append(e2_temp)
-
-    print("out of vocab word count ={}".format(oov_nums))
-    return model.Batch(input_ids, entities_rel_pos1, entities_rel_pos2, nearby_words1, nearby_words2)
+    batch_nums = len(test_batch.samples) / test_batch.batch_size
+    print("test=> loss: {0} accuracy: {1}".format(test_loss / batch_nums, test_accuracy / batch_nums))
+    return test_accuracy / batch_nums, p_labels
 
 
-def convert2positive(pos):
+def build_batch(samples, labels, entities, vocab, max_len):
 
-    if pos < -60:
-        pos = 0
-    elif -60 <= pos <= 60:
-        pos += 61
-    else:
-        pos = 122
-    return pos
+    util.pad_sentence(samples, max_len)
+
+    samples_id, oov_vocab = util.word2index(samples, vocab)
+    rel_e1_pos, rel_e2_pos = util.entities_pos(samples, entities)
+    e1, e2, nearby_e1, nearby_e2 = util.nearby_entities(samples, vocab, entities)
+
+    batch = model.Batch(samples_id, labels, rel_e1_pos, rel_e2_pos, e1, e2, nearby_e1, nearby_e2)
+    return batch, oov_vocab
 
 
-def pad_sentence(sentences, max_len):
-    for sen in sentences:
-        padding_num = max_len - len(sen)
-        if padding_num > 0:
-            sen.extend(padding_num * [model.padding_word])
-    return sentences
+def main(unused_argv):
 
+    train_samples, train_labels, train_entities, train_max_lens = semeval.load_data(FLAGS.train_data_path,
+                                                                                    FLAGS.labels_num, True)
+
+    test_samples, test_labels, test_entities, test_max_lens = semeval.load_data(FLAGS.test_data_path,
+                                                                                FLAGS.labels_num, True)
+
+    max_len = max(train_max_lens, test_max_lens)
+
+    print("load data complete, sentence max len: {0}".format(max_len))
+
+    vocab, embeddings = emb.load_embedding(FLAGS.embedding_dim, emb.words_path, emb.em_path)
+    print("origin_vocab len : {0}".format(len(vocab)))
+    embeddings = emb.padding_word(embeddings, vocab, FLAGS.embedding_dim, util.padding_word)
+
+    train_batch, train_oov = build_batch(train_samples, train_labels, train_entities, vocab, max_len)
+    embeddings = emb.pad_embedding(vocab, embeddings, train_oov, FLAGS.embedding_dim)
+
+    test_batch, test_oov = build_batch(test_samples, test_labels, test_entities, vocab, max_len)
+    embeddings = emb.pad_embedding(vocab, embeddings, test_oov, FLAGS.embedding_dim)
+
+    train(train_batch, test_batch, embeddings, max_len)
+
+
+FLAGS = tf.app.flags.FLAGS
+tf.app.flags.DEFINE_string("train_data_path", "../semeval08/cnn/train.txt", "training data dir")
+tf.app.flags.DEFINE_string("test_data_path", "../semeval08/cnn/test.txt", "test data dir")
+tf.app.flags.DEFINE_string("log_dir", "./logs", " the log dir")
+tf.app.flags.DEFINE_integer("labels_num", 19, "max num of labels")
+tf.app.flags.DEFINE_integer("embedding_dim", 50, "embedding dim")
+tf.app.flags.DEFINE_integer("pos_num", 123, "position feature num")
+tf.app.flags.DEFINE_integer("pos_dim", 5, "position feature dim")
+tf.app.flags.DEFINE_integer("epoch_num", 200, "epoch num")
+tf.app.flags.DEFINE_integer("kernel_window", 3, "convolution kernel window size")
+tf.app.flags.DEFINE_integer("kernel_nums", 200, "convolution kernel nums")
+tf.app.flags.DEFINE_boolean("lexical", True, "select lexical feature")
+tf.app.flags.DEFINE_boolean("pos", True, "select position feature")
+tf.app.flags.DEFINE_boolean("attention", False, "select attention mechanism")
+tf.app.flags.DEFINE_float("learning_rate", 0.001, "learning rate")
 
 if '__main__' == __name__:
-    train()
+
+    tf.app.run()

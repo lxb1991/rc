@@ -13,7 +13,9 @@ class DepTreeHelper:
         # fix the bug of "Use software specific configuration paramaters or set the JAVAHOME environment variable."
         os.environ['JAVAHOME'] = "/home/lxb/tool/jdk1.8.0_161"
 
-        self.dep_parser = StanfordDependencyParser(path_to_jar=self.parser_jar, path_to_models_jar=self.model_jar)
+        self.dep_parser = StanfordDependencyParser(path_to_jar=self.parser_jar, path_to_models_jar=self.model_jar,
+                                                   corenlp_options=['-originalDependencies', '-outputFormatOptions',
+                                                                    'basicDependencies'])
 
     def dep_graph(self, sentence):
         parse_tree = list(self.dep_parser.parse(sentence))
@@ -170,10 +172,10 @@ class TreeNode:
 
 def process():
 
-    lines = list(open('../semeval08/train.txt', 'r').readlines())
+    lines = list(open('../semeval08/test.txt', 'r').readlines())
     sentences = [s.split(' ') for s in [l.strip().lower() for l in lines]]
     helper = DepTreeHelper()
-    with open('./dp.txt', 'w') as file:
+    with open('./dp_test.txt', 'w') as file:
         line_num = 0
         for sentence in sentences:
             try:
@@ -215,13 +217,13 @@ def process():
                 file.writelines(sentence)
 
 
-if '__main__' == __name__:
+def process_single():
 
-    sent = "either we saw our mothers show fear from bugs / spiders and learned to fear them irrationally .".split(' ')
+    sent = "the pendant with the bail measure 1 1/4 .".split(' ')
     helper = DepTreeHelper()
     graph = helper.dep_graph(sent)
-    sent_map = helper.dep_tree(graph, sent, 6, 8)
-    l_sdp, r_sdp = helper.sdp(sent_map[6], sent_map[8])
+    sent_map = helper.dep_tree(graph, sent, 1, 4)
+    l_sdp, r_sdp = helper.sdp(sent_map[1], sent_map[4])
 
     l_word = []
     r_word = []
@@ -242,3 +244,8 @@ if '__main__' == __name__:
     if len(r_chain):
         sdp_str.extend(helper.relation(graph, r_chain))
     print(' '.join(sdp_str) + '\n')
+
+
+if '__main__' == __name__:
+    # process_single()
+    pass

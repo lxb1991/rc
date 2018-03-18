@@ -1,3 +1,4 @@
+import numpy as np
 import os
 import pickle
 
@@ -29,7 +30,25 @@ def load_embedding(dim, words_file, em_file):
     return vocab, embeddings
 
 
+def padding_word(embeddings, vocab, dim, pad_word):
+
+    pad_id = len(vocab)
+    vocab[pad_word] = pad_id
+    embeddings = np.asarray(embeddings)
+    return np.vstack((embeddings, np.zeros([dim], dtype=float)))
+
+
+def pad_embedding(vocab, embeddings, oov_vocab, dim):
+
+    oov_nums = len(oov_vocab)
+    oov_embeddings = np.random.normal(0, 0.1, [oov_nums, dim])
+    embeddings = np.vstack((embeddings, oov_embeddings))
+    print("padding complete vocab len : {0}, embeddings len: {1}".format(len(vocab), len(embeddings)))
+
+    return embeddings
+
+
 words_path = "../semeval08/senna/words.lst"
 em_path = "../semeval08/senna/embeddings.txt"
-words_pkl_path = "../semeval08/senna/words.pkl"
-em_pkl_path = "../semeval08/senna/embeddings.pkl"
+words_pkl_path = "../semeval08/senna/pkl/words.pkl"
+em_pkl_path = "../semeval08/senna/pkl/embeddings.pkl"
